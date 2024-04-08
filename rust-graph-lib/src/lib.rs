@@ -6,6 +6,8 @@ use std::marker::PhantomData;
 use traits::ConfigTrait;
 use traits::ContainerGenTrait;
 use traits::DirectedSelectorTrait;
+use traits::EdgeHelper;
+use traits::GraphHelper;
 use traits::StorageSelectorTrait;
 use traits::VertexTypeSelectorTrait;
 
@@ -36,14 +38,32 @@ where
     value_type: PhantomData<ValueType>,
 }
 
-impl<ValueType> ContainerGenTrait for ContainerGen<VecS, ValueType>
+impl<ValueType> ContainerGenTrait<ValueType> for ContainerGen<VecS, ValueType>
 {
     type Type = Vec<ValueType>;
+
+    fn iter<'a>(container: &'a Self::Type) -> impl Iterator<Item = &'a ValueType>
+    where
+        ValueType: 'a,
+    {
+        container.iter()
+    }
+
+    fn remove(container: &mut Self::Type, index: usize) { container.swap_remove(index); }
 }
 
-impl<ValueType> ContainerGenTrait for ContainerGen<MapS, ValueType>
+impl<ValueType> ContainerGenTrait<ValueType> for ContainerGen<MapS, ValueType>
 {
     type Type = HashMap<usize, ValueType>;
+
+    fn iter<'a>(container: &'a Self::Type) -> impl Iterator<Item = &'a ValueType>
+    where
+        ValueType: 'a,
+    {
+        container.values()
+    }
+
+    fn remove(container: &mut Self::Type, index: usize) { container.remove(&index); }
 }
 
 #[derive(Default)]
@@ -258,44 +278,205 @@ where
     GraphProperty: Default,
     VertexProperty: Default,
     EdgeProperty: Default,
-    ContainerGen<VertexEdgeStorageType, usize>: ContainerGenTrait,
+    ContainerGen<VertexEdgeStorageType, usize>: ContainerGenTrait<usize>,
     ContainerGen<
         VertexStorageSelector,
         <VertexTypeSelector<
-            <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait>::Type,
+            <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type,
             VertexStorageSelector,
             VertexProperty,
         > as VertexTypeSelectorTrait>::Type,
-    >: ContainerGenTrait,
+    >: ContainerGenTrait<
+        <VertexTypeSelector<
+            <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type,
+            VertexStorageSelector,
+            VertexProperty,
+        > as VertexTypeSelectorTrait>::Type,
+    >,
     ContainerGen<
         EdgeStorageSelector,
         Edge<
             EdgeDirectedSelector,
             <VertexTypeSelector<
-                <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait>::Type,
+                <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type,
                 VertexStorageSelector,
                 VertexProperty,
             > as VertexTypeSelectorTrait>::Type,
             EdgeProperty,
         >,
-    >: ContainerGenTrait,
+    >: ContainerGenTrait<
+        Edge<
+            EdgeDirectedSelector,
+            <VertexTypeSelector<
+                <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type,
+                VertexStorageSelector,
+                VertexProperty,
+            > as VertexTypeSelectorTrait>::Type,
+            EdgeProperty,
+        >,
+    >,
     VertexTypeSelector<
-        <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait>::Type,
+        <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type,
         VertexStorageSelector,
         VertexProperty,
     >: VertexTypeSelectorTrait,
 {
-    type VertexEdgeStorage =
-        <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait>::Type;
-    type VertexType = <VertexTypeSelector<
-        Self::VertexEdgeStorage,
-        VertexStorageSelector,
-        VertexProperty,
-    > as VertexTypeSelectorTrait>::Type;
+    type VertexEdgeStorage = <ContainerGen<VertexEdgeStorageType, usize> as ContainerGenTrait<usize>>::Type;
+    type VertexType = <VertexTypeSelector<Self::VertexEdgeStorage, VertexStorageSelector, VertexProperty> as VertexTypeSelectorTrait>::Type;
     type EdgeType = Edge<EdgeDirectedSelector, Self::VertexType, EdgeProperty>;
-    type VertexStorage =
-        <ContainerGen<VertexStorageSelector, Self::VertexType> as ContainerGenTrait>::Type;
-    type EdgeStorage =
-        <ContainerGen<EdgeStorageSelector, Self::EdgeType> as ContainerGenTrait>::Type;
+    type VertexStorage = <ContainerGen<VertexStorageSelector, Self::VertexType> as ContainerGenTrait<Self::VertexType>>::Type;
+    type EdgeStorage = <ContainerGen<EdgeStorageSelector, Self::EdgeType> as ContainerGenTrait<Self::EdgeType>>::Type;
     type EdgeDirected = EdgeDirectedSelector;
+    type GraphProperty = GraphProperty;
+    type VertexProperty = VertexProperty;
+    type EdgeProperty = EdgeProperty;
+    type EdgeStorageSelector = EdgeStorageSelector;
+}
+
+struct AdjListVec<Config>
+where
+    Config: ConfigTrait,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    vertices: Config::VertexStorage,
+    edges: <ContainerGen<Config::EdgeStorageSelector, Config::EdgeType> as ContainerGenTrait<Config::EdgeType>>::Type,
+}
+
+impl<Config> EdgeHelper<Config, Directed> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Directed>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge(&mut self, index: usize) { todo!() }
+
+    fn edges<'a>(&'a self) -> impl Iterator<Item = &'a <Config as ConfigTrait>::EdgeType>
+    where
+        Config::EdgeType: 'a,
+    {
+        <ContainerGen<Config::EdgeStorageSelector, Config::EdgeType> as ContainerGenTrait<Config::EdgeType>>::iter(&self.edges)
+    }
+}
+
+impl<Config> GraphHelper<Config, Directed> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Directed>,
+    AdjListVec<Config>: EdgeHelper<Config, Directed>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge_from_vertex(&mut self, source: usize, target: usize) { todo!() }
+
+    fn remove_out_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn remove_edge_if(&mut self, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn clear_vertex(&mut self, index: usize) { todo!() }
+
+    fn clear_out_edges(&mut self, index: usize) { todo!() }
+
+    fn num_edges(&mut self) -> usize { todo!() }
+
+    fn add_edge(&mut self, source: usize, target: usize, property: &<Config as ConfigTrait>::EdgeProperty) -> Option<usize> { todo!() }
+
+    fn in_edge_list(&self, index: usize) -> &<Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn in_edge_list_mug(&mut self, index: usize) -> &mut <Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn remove_in_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+}
+
+impl<Config> EdgeHelper<Config, Undirected> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Undirected>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge(&mut self, index: usize) { todo!() }
+
+    fn edges<'a>(&'a self) -> impl Iterator<Item = &'a <Config as ConfigTrait>::EdgeType>
+    where
+        Config::EdgeType: 'a,
+    {
+        <ContainerGen<Config::EdgeStorageSelector, Config::EdgeType> as ContainerGenTrait<Config::EdgeType>>::iter(&self.edges)
+    }
+}
+
+impl<Config> GraphHelper<Config, Undirected> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Undirected>,
+    AdjListVec<Config>: EdgeHelper<Config, Undirected>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge_from_vertex(&mut self, source: usize, target: usize) { todo!() }
+
+    fn remove_out_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn remove_edge_if(&mut self, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn clear_vertex(&mut self, index: usize) { todo!() }
+
+    fn clear_out_edges(&mut self, index: usize) { todo!() }
+
+    fn num_edges(&mut self) -> usize { todo!() }
+
+    fn add_edge(&mut self, source: usize, target: usize, property: &<Config as ConfigTrait>::EdgeProperty) -> Option<usize> { todo!() }
+
+    fn in_edge_list(&self, index: usize) -> &<Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn in_edge_list_mug(&mut self, index: usize) -> &mut <Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn remove_in_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+}
+
+impl<Config> EdgeHelper<Config, Bidirectional> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Bidirectional>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge(&mut self, index: usize)
+    {
+        <ContainerGen<Config::EdgeStorageSelector, Config::EdgeType> as ContainerGenTrait<Config::EdgeType>>::remove(
+            &mut self.edges,
+            index,
+        );
+    }
+
+    fn edges<'a>(&'a self) -> impl Iterator<Item = &'a <Config as ConfigTrait>::EdgeType>
+    where
+        Config::EdgeType: 'a,
+    {
+        <ContainerGen<Config::EdgeStorageSelector, Config::EdgeType> as ContainerGenTrait<Config::EdgeType>>::iter(&self.edges)
+    }
+}
+
+impl<Config> GraphHelper<Config, Bidirectional> for AdjListVec<Config>
+where
+    Config: ConfigTrait<EdgeDirected = Bidirectional>,
+    AdjListVec<Config>: EdgeHelper<Config, Bidirectional>,
+    ContainerGen<Config::EdgeStorageSelector, Config::EdgeType>: ContainerGenTrait<Config::EdgeType>,
+    Config::EdgeStorageSelector: StorageSelectorTrait,
+{
+    fn remove_edge_from_vertex(&mut self, source: usize, target: usize) { todo!() }
+
+    fn remove_out_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn remove_edge_if(&mut self, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
+
+    fn clear_vertex(&mut self, index: usize) { todo!() }
+
+    fn clear_out_edges(&mut self, index: usize) { todo!() }
+
+    fn num_edges(&mut self) -> usize { todo!() }
+
+    fn add_edge(&mut self, source: usize, target: usize, property: &<Config as ConfigTrait>::EdgeProperty) -> Option<usize> { todo!() }
+
+    fn in_edge_list(&self, index: usize) -> &<Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn in_edge_list_mug(&mut self, index: usize) -> &mut <Config as ConfigTrait>::VertexEdgeStorage { todo!() }
+
+    fn remove_in_edge_if(&mut self, source: usize, predicate: impl Fn(&<Config as ConfigTrait>::EdgeType) -> bool) { todo!() }
 }
