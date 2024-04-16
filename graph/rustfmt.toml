@@ -1,0 +1,9 @@
+brace_style = "AlwaysNextLine"
+control_brace_style = "AlwaysNextLine"
+fn_params_layout = "Compressed"
+fn_single_line = true
+imports_granularity = "Item"
+reorder_impl_items = true
+group_imports = "StdExternalCrate"
+where_single_line = true
+wrap_comments = true
