@@ -260,10 +260,11 @@ where
 
         if let Some(swapped_edge) = self.edges.get(remove_index)
         {
+            let old_index = self.edges.len();
             if let Some(source_swapped_index) = self.vertices[swapped_edge.source]
                 .out_edges
                 .iter()
-                .position(|e| e.index == remove_index)
+                .position(|e| e.index == old_index)
             {
                 self.vertices[swapped_edge.source].out_edges[source_swapped_index].index =
                     remove_index;
@@ -272,7 +273,7 @@ where
             if let Some(target_swapped_index) = self.vertices[swapped_edge.target]
                 .out_edges
                 .iter()
-                .position(|e| e.index == remove_index)
+                .position(|e| e.index == old_index)
             {
                 self.vertices[swapped_edge.target].out_edges[target_swapped_index].index =
                     remove_index;
@@ -550,7 +551,7 @@ where
 
     pub fn edges(&self) -> impl Iterator + '_ { self.edges.iter() }
 
-    pub fn adjacent_vertices(&self, vertex_index: usize) -> impl Iterator + '_
+    pub fn adjacent_vertices(&self, vertex_index: usize) -> impl Iterator<Item = usize> + '_
     {
         self.vertices[vertex_index]
             .out_edges
@@ -558,7 +559,7 @@ where
             .map(|e| e.target)
     }
 
-    pub fn inv_adjacent_vertices(&self, vertex_index: usize) -> impl Iterator + '_
+    pub fn inv_adjacent_vertices(&self, vertex_index: usize) -> impl Iterator<Item = usize> + '_
     {
         self.edges
             .iter()
@@ -650,23 +651,32 @@ where
         &mut self, remove_index: usize, edge: RandDirectedVecAdjListEdge<EdgeProperty>,
     )
     {
+        // get the index of the edge to be removed in the out_edges list of the source
+        // vertex
         if let Some(source_remove_index) = self.vertices[edge.source]
             .out_edges
             .iter()
             .position(|e| e.index == remove_index)
         {
+            // remove the edge from the source vertex out edge list
             self.vertices[edge.source]
                 .out_edges
                 .swap_remove(source_remove_index);
         }
 
+        // get the edge object at the remove index(the edge that's there after
+        // swap_remove)
         if let Some(swapped_edge) = self.edges.get(remove_index)
         {
+            // That edge's old index would be the end of the old list(which was one larger,
+            // so current length)
+            let old_index = self.edges.len();
             if let Some(source_swapped_index) = self.vertices[swapped_edge.source]
                 .out_edges
                 .iter()
-                .position(|e| e.index == remove_index)
+                .position(|e| e.index == old_index)
             {
+                // set the index on the source vertex to the new index it was swapped to
                 self.vertices[swapped_edge.source].out_edges[source_swapped_index].index =
                     remove_index;
             }
@@ -682,46 +692,44 @@ where
         }
     }
 
+    fn remove_edges(&mut self, edges: Vec<usize>)
+    {
+        edges.iter().for_each(|i| self.remove_edge_at(*i));
+    }
+
     pub fn remove_edge(&mut self, source: usize, target: usize)
     {
-        self.get_edges(source, target)
-            .collect::<Vec<usize>>()
-            .iter()
-            .for_each(|i| self.remove_edge_at(*i));
+        let edges_to_remove = self.get_edges(source, target).collect::<Vec<usize>>();
+        self.remove_edges(edges_to_remove);
     }
 
     pub fn remove_out_edge_if(&mut self, vertex_index: usize, predicate: impl Fn(&usize) -> bool)
     {
-        self.vertices[vertex_index]
-            .out_edges
-            .iter()
-            .map(|e| e.index)
+        let edges_to_remove = self
+            .out_edges(vertex_index)
             .filter(predicate)
-            .collect::<Vec<usize>>()
-            .iter()
-            .for_each(|i| self.remove_edge_at(*i));
+            .collect::<Vec<usize>>();
+
+        self.remove_edges(edges_to_remove);
     }
 
     pub fn remove_in_edge_if(&mut self, vertex_index: usize, predicate: impl Fn(&usize) -> bool)
     {
-        for index in 0..self.edges.len()
-        {
-            if self.edges[index].target == vertex_index && predicate(&index)
-            {
-                self.remove_edge_at(index);
-            }
-        }
+        let edges_to_remove = self
+            .in_edges(vertex_index)
+            .filter(predicate)
+            .collect::<Vec<usize>>();
+
+        self.remove_edges(edges_to_remove);
     }
 
     pub fn remove_edge_if(&mut self, predicate: impl Fn(&usize) -> bool)
     {
-        for index in 0..self.edges.len()
-        {
-            if predicate(&index)
-            {
-                self.remove_edge_at(index);
-            }
-        }
+        let edges_to_remove = (0..self.edges.len())
+            .filter(predicate)
+            .collect::<Vec<usize>>();
+
+        self.remove_edges(edges_to_remove);
     }
 
     pub fn add_vertex(&mut self) -> usize { self.add_vertex_with_property(Default::default()) }
@@ -747,45 +755,63 @@ where
         self.remove_out_edge_if(vertex_index, always_true);
     }
 
-    pub fn clear_in_edges(&mut self, vertex_index: usize) { self.clear_vertex(vertex_index); }
-
-    pub fn remove_vertex(&mut self, vertex_index: usize)
+    pub fn clear_in_edges(&mut self, vertex_index: usize)
     {
-        let descending = |a: &usize, b: &usize| b.cmp(a);
-        let mut edges_to_remove = self.vertices[vertex_index]
-            .out_edges
-            .iter()
-            .map(|e| e.index)
-            .collect::<Vec<usize>>();
-        edges_to_remove.sort_by(descending);
+        let always_true = |e: &'_ usize| true;
+        self.remove_in_edge_if(vertex_index, always_true);
+    }
 
-        let mut swap_map = HashMap::new();
-        let mut swap_map_rev = HashMap::new();
-        let mut swap_index = self.edges.len();
-        for index in edges_to_remove
+    fn update_out_edges(&mut self, old_index: usize, new_index: usize)
+    {
+        let out_edges_to_update = self.out_edges(old_index).collect::<Vec<usize>>();
+
+        for &index in out_edges_to_update.iter()
         {
-            swap_index -= 1;
-            if index != swap_index
-            {
-                let redirect_index = swap_map_rev.remove(&swap_index).unwrap_or(swap_index);
-                swap_map.insert(redirect_index, index);
-                swap_map_rev.insert(index, redirect_index);
-            }
-            self.edges.swap_remove(index);
+            self.edges[index].source = new_index;
         }
+    }
 
-        self.vertices.swap_remove(vertex_index);
+    fn update_in_edges(&mut self, old_index: usize, new_index: usize)
+    {
+        let in_edges_to_update = self.in_edges(old_index).collect::<Vec<usize>>();
 
-        for vertex in self.vertices.iter_mut()
+        for &index in in_edges_to_update.iter()
         {
-            for edge in vertex.out_edges.iter_mut()
+            self.edges[index].target = new_index;
+        }
+    }
+
+    fn update_vertices(&mut self, old_index: usize, new_index: usize)
+    {
+        let vertices_to_update = self
+            .inv_adjacent_vertices(old_index)
+            .collect::<Vec<usize>>();
+
+        for &index in vertices_to_update.iter()
+        {
+            for out_edge in self.vertices[index].out_edges.iter_mut()
             {
-                if let Some(swap_value) = swap_map.get(&edge.index)
+                if out_edge.target == old_index
                 {
-                    edge.index = *swap_value;
+                    out_edge.target = new_index;
                 }
             }
         }
+    }
+
+    fn update_graph(&mut self, old_index: usize, new_index: usize)
+    {
+        self.update_out_edges(old_index, new_index);
+        self.update_in_edges(old_index, new_index);
+        self.update_vertices(old_index, new_index);
+    }
+
+    pub fn remove_vertex(&mut self, vertex_index: usize)
+    {
+        let old_index = self.vertices.len() - 1;
+        self.clear_vertex(vertex_index);
+        self.update_graph(old_index, vertex_index);
+        self.vertices.swap_remove(vertex_index);
     }
 
     pub fn get_vertex_properties(&self, vertex_index: usize) -> &VertexProperty
